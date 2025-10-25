@@ -3,49 +3,58 @@
 #include <MobaTools.h>
 
 #include "BluetoothSerial.h"
-
-// #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
-// #error Bluetooth is not Enabled! Please run `make menuconfig` to and Enable it
-// #endif
-
 BluetoothSerial btSerial;
+
+#include <Preferences.h>
+Preferences prefs;
 
 MoToStepper stepperW(2048, STEPDIR);  
 MoToStepper stepperF(2048, STEPDIR);  
 
+// Winding parameters
 int rwt = 500;
 int wsps = 1024;
 int wspwt = 2048;
-int fspwt = 100;
+int wsacc = 100;
+float fspwt = 100.0;
 int fs_l = 0;
 int fs_u = 300;
 int jwsps = 300;
 int jfsps = 300;
+int mstepexpw = 0;
+int mstepexpf=0;
 
+// State flags
 int ismoving_flag = 0;
 int iswinding_flag = 0;
 int feed_direction = 1;
 
-// #include <Preferences.h>
-// Preferences preferences;
-
-//int sposW, sposF;
-
 // Motor Winder
-const int ENW=23;
-const int DIRW=5;
-const int STEPW=18;
-const int M0W=19;
-const int M1W=21;
-const int M2W=17;  // BRIAN'S IS STILL WIRED ON 3 (COLLIDES WITH SERIAL0)
+const int ENW = 23;
+const int DIRW = 5;
+const int STEPW = 18;
+const int M0W = 19;
+const int M1W = 21;
+const int M2W = 17;
 
 // Motor Feed
-const int ENF=22;
-const int DIRF=13;
-const int STEPF=12;
-const int M0F=14;
-const int M1F=27;
-const int M2F=26;
+const int ENF = 22;
+const int DIRF = 13;
+const int STEPF = 12;
+const int M0F = 14;
+const int M1F = 27;
+const int M2F = 26;
+
+void setmicrostepping(int mstepexp, int M0, int M1, int M2)
+{
+  int Mv[3];
+  Mv[0] = M0;  Mv[1] = M1;  Mv[2] = M2;
+
+  for( int i=0; i<3; i++ ) {
+    if( (mstepexp>>i) & 1) digitalWrite(Mv[i], LOW);
+    else digitalWrite(Mv[i], HIGH);
+  }
+}
 
 // Output pins
 const int RPINS[] = { ENW, DIRW, STEPW, M0W, M1W, M2W, ENF, DIRF, STEPF, M0F, M1F, M2F }; 
@@ -56,21 +65,10 @@ void setup_pins(void)
 { 
   for( int i=0; i<rpins_length; i++ ) pinMode(RPINS[i], OUTPUT);  
   rpins_reset(); 
-  //digitalWrite(ENW, 1);  digitalWrite(ENF, 1);
+  setmicrostepping(mstepexpw, M0W, M1W, M2W);
+  setmicrostepping(mstepexpf, M0F, M1F, M2F);
 }
 void loop_pins(void) {};
-
-
-void setmicrostepping(int mstepexp, int M0, int M1, int M2)
-{
-  int Mv[3];
-  Mv[0] = M0;  Mv[1] = M1;  Mv[2] = M2;
-
-  for( int i=0; i<3; i++ ) {
-    if( (mstepexp>>i) & 1) digitalWrite(Mv[i],LOW);
-    else digitalWrite(Mv[i],HIGH);
-  }
-}
 
 
 // ----------------------------------------------------------------------
@@ -150,18 +148,18 @@ void serialcmd(char cmd)
   }
 
   // Advance microstepping
-  if( cmd=='a' || cmd=='A' ) {
-    int Mv[3];
-    if( cmd=='a' ) { Mv[0] = M0W;  Mv[1] = M1W;  Mv[2] = M2W; }
-    else { Mv[0] = M0F;  Mv[1] = M1F;  Mv[2] = M2F; }
+  if( cmd=='a' ) {
+    mstepexpw += 1;
+    if( mstepexpw>5 ) mstepexpw = 0;
+    setmicrostepping(mstepexpw, M0W, M1W, M2W);
+    prefs.putInt("mstepexpw", mstepexpw);
+  }
 
-    int mstepexp = 4*digitalRead(Mv[2]) + 2*digitalRead(Mv[1]) + digitalRead(Mv[0]);
-    mstepexp += 1;
-    if( mstepexp>5 ) mstepexp = 0;
-    for( int i=0; i<3; i++ ) {
-      if( (mstepexp>>i) & 0x1) digitalWrite(Mv[i],HIGH);
-      else digitalWrite(Mv[i],LOW);
-    }
+  if( cmd=='A' ) {
+    mstepexpf += 1;
+    if( mstepexpf>5 ) mstepexpf = 0;
+    setmicrostepping(mstepexpf, M0F, M1F, M2F);
+    prefs.putInt("mstepexpw", mstepexpw);
   }
 
   // Relays (manual)
@@ -174,7 +172,7 @@ void serialcmd(char cmd)
   // Jog W
   if( cmd=='r' || cmd=='s' || cmd=='R' || cmd=='S' ) {
     stepperW.setSpeedSteps(jwsps*10);
-    stepperW.setRampLen(100);
+    stepperW.setRampLen(wsacc);
   }
   if( cmd=='r') stepperW.rotate(-1);
   if( cmd=='s' ) stepperW.rotate(1);
@@ -183,34 +181,39 @@ void serialcmd(char cmd)
   // Jog F
   if( cmd=='t' || cmd=='u' || cmd=='T' || cmd=='U' ) {
     stepperF.setSpeedSteps(jfsps*10);
-    stepperF.setRampLen(1);
+    stepperF.setRampLen(0);
   }
   if( cmd=='t') stepperF.rotate(-1);
   if( cmd=='u' ) stepperF.rotate(1);
   if( cmd=='T' || cmd=='U' ) stepperF.rotate(0);
 
-  if( cmd=='B' ) rwt = (int)round(getval_btserial());
-  if( cmd=='c' ) wsps = (int)round(getval_btserial());
-  if( cmd=='C' ) wspwt = (int)round(getval_btserial());
-  if( cmd=='d' ) fspwt = (int)round(getval_btserial());
+  if( cmd=='B' ) { rwt = (int)round(getval_btserial());  prefs.putInt("rwt", rwt); }
+  if( cmd=='c' ) { wsps = (int)round(getval_btserial());  prefs.putInt("wsps", wsps); }
+  if( cmd=='C' ) { wspwt = (int)round(getval_btserial());  prefs.putInt("wspwt", wspwt); }
+  if( cmd=='d' ) { fspwt = (float)getval_btserial();  prefs.putFloat("fspwt", fspwt); }
+  if( cmd=='k' ) { wsacc = (int)round(getval_btserial());  prefs.putInt("wsacc", wsacc); }
   if( cmd=='e' ) {
     fs_l = (int)round(getval_btserial());
     if( fs_l>fs_u ) fs_u = fs_l + 1;
+    prefs.putInt("fs_l", fs_l);  prefs.putInt("fs_u", fs_u);
   }
   if( cmd=='E' ) {
     fs_u = (int)round(getval_btserial());
     if( fs_u<fs_l ) fs_l = fs_u - 1;
+    prefs.putInt("fs_l", fs_l);  prefs.putInt("fs_u", fs_u);
   }
-  if( cmd=='K' ) jwsps = (int)round(getval_btserial());
-  if( cmd=='J' ) jfsps = (int)round(getval_btserial());
+  if( cmd=='K' ) { jwsps = (int)round(getval_btserial()); prefs.putInt("jwsps", jwsps); }
+  if( cmd=='J' ) { jfsps = (int)round(getval_btserial()); prefs.putInt("jfsps", jfsps); }
 
   if( cmd=='F' ) {
     fs_l = stepperF.currentPosition();
     if( fs_l>fs_u ) fs_u = fs_l + 1;
+    prefs.putInt("fs_l", fs_l);  prefs.putInt("fs_u", fs_u);
   }
   if( cmd=='G' ) {
     fs_u = stepperF.currentPosition();
     if( fs_u<fs_l ) fs_l = fs_u - 1;
+    prefs.putInt("fs_l", fs_l);  prefs.putInt("fs_u", fs_u);
   }
   if( cmd=='P' ) {
     stepperF.setSpeedSteps(jfsps*10);
@@ -221,6 +224,16 @@ void serialcmd(char cmd)
     stepperF.setSpeedSteps(jfsps*10);
     stepperF.writeSteps(fs_u);
     ismoving_flag = 1;
+  }
+
+  // Modify fspwt to make integral number of feed cycles (start and end positions same)
+  if( cmd=='n' ) {
+    float fspfc = 2*(fs_u - fs_l + 1 + 1);  // feed steps per feed cycle
+    float rfc_f = rwt*(float)fspwt/fspfc;  // total feed cycles (float)
+    int rfc = (int)round(rfc_f);  // total feed cycles (integer)
+    float fspwt_f = (float)rfc/rwt*fspfc;
+    fspwt = fspwt_f;
+    prefs.putFloat("fspwt", fspwt);
   }
 
   if( cmd=='z') {
@@ -242,20 +255,17 @@ void serialcmd(char cmd)
 
     // Set motor speeds for winding
     stepperW.setSpeedSteps(wsps*10);
-    stepperW.setRampLen(100);
+    stepperW.setRampLen(wsacc);
     float wtps = round((float)wsps/wspwt);
     float fsps = round((float)fspwt*wtps);
-    //Serial.println("wtps=" + String(wtps));
-    //Serial.println("fsps=" + String(fsps));
     stepperF.setSpeedSteps(fsps*10);
-    stepperF.setRampLen(1);
+    stepperF.setRampLen(0);
 
     // Start winding
     stepperW.setZero();
     stepperW.writeSteps(rwt*wspwt);
-    //btLog("Calling stepperW.writeSteps(" + String(rwt*wspwt) + ")");
     stepperF.rotate(feed_direction);
-    //btLog("Calling stepperF.rotate((" + String(feed_direction) + ")");
+
     iswinding_flag = 1;
   }
 
@@ -355,9 +365,7 @@ void report_stepperset()
 {
   String mstr;
 
-  int mstepexpw = 4*digitalRead(M2W) + 2*digitalRead(M1W) + digitalRead(M0W);
   mstr = "*a";  mstr += String((int)round(pow(2,mstepexpw)));  mstr += "*";  btSerial.println(mstr);
-  int mstepexpf = 4*digitalRead(M2F) + 2*digitalRead(M1F) + digitalRead(M0F);
   mstr = "*A";  mstr += String((int)round(pow(2,mstepexpf)));  mstr += "*";  btSerial.println(mstr);
   mstr = "*B";  mstr += String(rwt);  mstr += "*";  btSerial.println(mstr);
   mstr = "*c";  mstr += String(wsps);  mstr += "*";  btSerial.println(mstr);
@@ -367,6 +375,7 @@ void report_stepperset()
   mstr = "*E";  mstr += String(fs_u);  mstr += "*";  btSerial.println(mstr);
   mstr = "*K";  mstr += String(jwsps);  mstr += "*";  btSerial.println(mstr);
   mstr = "*J";  mstr += String(jfsps);  mstr += "*";  btSerial.println(mstr);
+  mstr = "*k";  mstr += String(wsacc);  mstr += "*";  btSerial.println(mstr);
 
   stepperset_lastreport = millis();
 }
@@ -392,22 +401,35 @@ void setup() {
   btSerial.begin("tonetwister");  // bluetooth device name
   Serial.println("The device started, now you can pair it with bluetooth!");
 
-  setup_pins();
+  // Setup and load preferences
+  prefs.begin("tonetwister-app");
+  rwt = prefs.getInt("rwt", rwt);
+  wsps = prefs.getInt("wsps", wsps);
+  wspwt = prefs.getInt("wspwt", wspwt);
+  wsacc = prefs.getInt("wsacc", wsacc);
+  fspwt = prefs.getFloat("fspwt", fspwt);
+  fs_l = prefs.getInt("fs_l", fs_l);
+  fs_u = prefs.getInt("fs_u", fs_u);
+  jwsps = prefs.getInt("jwsps", jwsps);
+  jfsps = prefs.getInt("jfsps", jfsps);
+  mstepexpw = prefs.getInt("mstepexpw", mstepexpw);
+  mstepexpf = prefs.getInt("mstepexpf", mstepexpf);
 
+  setup_pins();
   iswinding_flag = 0;
 
   st = stepperW.attach(STEPW, DIRW);
   stepperW.attachEnable(ENW, 0, LOW);
   stepperW.autoEnable(1);
-  stepperW.setSpeed(150);
-  stepperW.setRampLen(5);
+  stepperW.setSpeedSteps(jwsps*10);
+  stepperW.setRampLen(wsacc);
   //stepperW.setZero();  stepperW.rotate(0);
 
   st = stepperF.attach(STEPF, DIRF);
   stepperF.attachEnable(ENF, 0, LOW);
   stepperF.autoEnable(1);
-  stepperF.setSpeed(150);
-  stepperF.setRampLen(5);
+  stepperF.setSpeedSteps(jfsps*10);
+  stepperF.setRampLen(0);
   //stepperF.setZero();  stepperF.rotate(0);
 }
 
