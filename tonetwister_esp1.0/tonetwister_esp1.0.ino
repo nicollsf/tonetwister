@@ -51,8 +51,8 @@ void setmicrostepping(int mstepexp, int M0, int M1, int M2)
   Mv[0] = M0;  Mv[1] = M1;  Mv[2] = M2;
 
   for( int i=0; i<3; i++ ) {
-    if( (mstepexp>>i) & 1) digitalWrite(Mv[i], LOW);
-    else digitalWrite(Mv[i], HIGH);
+    if( (mstepexp>>i) & 1) digitalWrite(Mv[i], HIGH);
+    else digitalWrite(Mv[i], LOW);
   }
 }
 
