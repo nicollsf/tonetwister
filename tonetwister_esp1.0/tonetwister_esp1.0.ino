@@ -246,7 +246,7 @@ void serialcmd(char cmd)
   if( cmd=='W' ) {
 
     // Abort if current feed position not within limits
-    if( stepperF.currentPosition()<fs_l || stepperF.currentPosition()>fs_u) {
+    if( stepperF.currentPosition()<fs_l || stepperF.currentPosition()>fs_u ) {
       btLog("Feed stepper must be inside limits");
       String mstr = "*S*";
       btSerial.println(mstr);

@@ -6,14 +6,10 @@ BluetoothSerial btSerial;
 #include <Preferences.h>
 Preferences prefs;
 
-#include "FastAccelStepper.h"
-FastAccelStepperEngine fas_engine = FastAccelStepperEngine();
+#include <MobaTools.h>
 
-FastAccelStepper *stepperW = NULL;
-FastAccelStepper *stepperF = NULL;
-
-//MoToStepper stepperW(2048, STEPDIR);  
-//MoToStepper stepperF(2048, STEPDIR);  
+MoToStepper stepperW(2048, STEPDIR);  
+MoToStepper stepperF(2048, STEPDIR);  
 
 // Winding parameters
 int rwt = 500;
@@ -26,7 +22,7 @@ int fs_u = 300;
 int jwsps = 300;
 int jfsps = 300;
 int mstepexpw = 0;
-int mstepexpf=0;
+int mstepexpf = 0;
 
 // State flags
 int ismoving_flag = 0;
@@ -134,7 +130,7 @@ float getval_ptriang(float w, float pt_per, float pt_slope, float pt_dc, float p
   float minv = pt_dc - pt_slope*pt_per/4;  // minimum value of triangular waveform
   float val = minv + pt_slope*fabs(wr);
 
-  Serial.println(String(val) + " = getval_ptriang(" +String(w) + "," + String(pt_per) + "," + String(pt_slope) + "," + String(pt_dc) + "," + String(pt_wmin) + ")");
+  //Serial.println(String(val) + " = getval_ptriang(" +String(w) + "," + String(pt_per) + "," + String(pt_slope) + "," + String(pt_dc) + "," + String(pt_wmin) + ")");
   return(val);
 }
 
@@ -163,13 +159,14 @@ void serialcmd(char cmd)
   // Kill
   if( cmd == 'N' ) {
     btLog("KILL");
-    stepperW->forceStop();  
-    //stepperF->forceStop();
-    //stepperW->stopMove();  
-    stepperF->stopMove();
+    stepperW.stop();  
+    stepperF.stop();
     //setup_pins();
     ismoving_flag = 0;
     iswinding_flag = 0;
+
+    //stepperW.rotate(0);
+    //stepperF.rotate(0);
   
     report_status();
   }
@@ -198,21 +195,21 @@ void serialcmd(char cmd)
 
   // Jog W
   if( cmd=='r' || cmd=='s' || cmd=='R' || cmd=='S' ) {
-    stepperW->setSpeedInHz(jwsps);
-    stepperW->setAcceleration(wsacc);
+    stepperW.setSpeedSteps(jwsps*10);
+    stepperW.setRampLen(wsacc);
   }
-  if( cmd=='r') stepperW->runBackward();
-  if( cmd=='s' ) stepperW->runForward();
-  if( cmd=='R' || cmd=='S' ) stepperW->stopMove();
+  if( cmd=='r') stepperW.rotate(-1);
+  if( cmd=='s' ) stepperW.rotate(1);
+  if( cmd=='R' || cmd=='S' ) stepperW.rotate(0);
 
   // Jog F
   if( cmd=='t' || cmd=='u' || cmd=='T' || cmd=='U' ) {
-    stepperF->setSpeedInHz(jfsps);
-    stepperF->setAcceleration(1000000);
+    stepperF.setSpeedSteps(jfsps*10);
+    stepperF.setRampLen(0);
   }
-  if( cmd=='t') stepperF->runBackward();
-  if( cmd=='u' ) stepperF->runForward();
-  if( cmd=='T' || cmd=='U' ) stepperF->stopMove();
+  if( cmd=='t') stepperF.rotate(-1);
+  if( cmd=='u' ) stepperF.rotate(1);
+  if( cmd=='T' || cmd=='U' ) stepperF.rotate(0);
 
   if( cmd=='B' ) { rwt = (int)round(getval_btserial());  prefs.putInt("rwt", rwt); }
   if( cmd=='c' ) { wsps = (int)round(getval_btserial());  prefs.putInt("wsps", wsps); }
@@ -233,23 +230,23 @@ void serialcmd(char cmd)
   if( cmd=='J' ) { jfsps = (int)round(getval_btserial()); prefs.putInt("jfsps", jfsps); }
 
   if( cmd=='F' ) {
-    fs_l = stepperF->getCurrentPosition();
+    fs_l = stepperF.currentPosition();
     if( fs_l>fs_u ) fs_u = fs_l + 1;
     prefs.putInt("fs_l", fs_l);  prefs.putInt("fs_u", fs_u);
   }
   if( cmd=='G' ) {
-    fs_u = stepperF->getCurrentPosition();
+    fs_u = stepperF.currentPosition();
     if( fs_u<fs_l ) fs_l = fs_u - 1;
     prefs.putInt("fs_l", fs_l);  prefs.putInt("fs_u", fs_u);
   }
   if( cmd=='P' ) {
-    stepperF->setSpeedInHz(jfsps);
-    stepperF->moveTo(fs_l);
+    stepperF.setSpeedSteps(jfsps*10);
+    stepperF.writeSteps(fs_l);
     ismoving_flag = 1;
   }
   if( cmd=='Q') {
-    stepperF->setSpeedInHz(jfsps);
-    stepperF->moveTo(fs_u);
+    stepperF.setSpeedSteps(jfsps*10);
+    stepperF.writeSteps(fs_u);
     ismoving_flag = 1;
   }
 
@@ -265,15 +262,15 @@ void serialcmd(char cmd)
 
   if( cmd=='z') {
     btLog("Setting current positions as home");
-    stepperW->setCurrentPosition(0);
-    stepperF->setCurrentPosition(0);
+    stepperW.setZero();
+    stepperF.setZero();
   }
 
   // Start winding
   if( cmd=='W' ) {
 
     // Abort if current feed position not within limits
-    if( stepperF->getCurrentPosition()<fs_l || stepperF->getCurrentPosition()>fs_u) {
+    if( stepperF.currentPosition()<fs_l || stepperF.currentPosition()>fs_u ) {
       btLog("Feed stepper must be inside limits");
       String mstr = "*S*";
       btSerial.println(mstr);
@@ -292,18 +289,17 @@ void serialcmd(char cmd)
     pt_wmin = -0.5;  // FIX!!!!  Assumes starting from fs_l
 
     // Set motor speeds for winding
-    stepperW->setSpeedInHz(wsps);
-    stepperW->setAcceleration(wsacc);
+    stepperW.setSpeedSteps(wsps*10);
+    stepperW.setRampLen(wsacc);
     float wtps = round((float)wsps/wspwt);
     float fsps = round((float)fspwt*wtps);
-    stepperF->setSpeedInHz(fsps);
-    stepperF->setAcceleration(1000000);
+    stepperF.setSpeedSteps(fsps*10);
+    stepperF.setRampLen(0);
 
     // Start winding
-    stepperW->setCurrentPosition(0);
-    stepperW->moveTo(rwt*wspwt);
-    if( feed_direction==1 ) stepperF->runForward();
-    else stepperF->runBackward();
+    stepperW.setZero();
+    stepperW.writeSteps(rwt*wspwt);
+    stepperF.rotate(feed_direction);
 
     iswinding_flag = 1;
   }
@@ -378,18 +374,18 @@ void report_stepperpos()
   //btLog("Reporting stepperpos");
  
   mstr = "*v";
-  if( iswinding_flag ) mstr += String(stepperW->getCurrentPosition());
+  if( iswinding_flag ) mstr += String(stepperW.currentPosition());
   else mstr += String(0);
   mstr += "*";
   btSerial.println(mstr);
 
   mstr = "*V";
-  mstr += String(stepperF->getCurrentPosition());
+  mstr += String(stepperF.currentPosition());
   mstr += "*";
   btSerial.println(mstr);
 
   mstr = "*b";
-  if( iswinding_flag ) mstr += String((double)stepperW->getCurrentPosition()/wspwt,2);
+  if( iswinding_flag ) mstr += String((double)stepperW.currentPosition()/wspwt,2);
   else mstr += String((double)0.0, 2);
   mstr += "*";
   btSerial.println(mstr);
@@ -457,26 +453,19 @@ void setup() {
   setup_pins();
   iswinding_flag = 0;
 
-  // Setup steppers
-  fas_engine.init();
+  st = stepperW.attach(STEPW, DIRW);
+  stepperW.attachEnable(ENW, 0, LOW);
+  stepperW.autoEnable(1);
+  stepperW.setSpeedSteps(jwsps*10);
+  stepperW.setRampLen(wsacc);
+  //stepperW.setZero();  stepperW.rotate(0);
 
-  stepperW = fas_engine.stepperConnectToPin(STEPW);
-  if( stepperW ) {
-    stepperW->setDirectionPin(DIRW);
-    stepperW->setEnablePin(ENW);
-    stepperW->setAutoEnable(true);
-    stepperW->setSpeedInHz(jwsps);
-    stepperW->setAcceleration(wsacc);
-  }
-
-  stepperF = fas_engine.stepperConnectToPin(STEPF);
-  if( stepperF ) {
-    stepperF->setDirectionPin(DIRF);
-    stepperF->setEnablePin(ENF);
-    stepperF->setAutoEnable(true);
-    stepperF->setSpeedInHz(jfsps);
-    stepperF->setAcceleration(1000000);
-  }
+  st = stepperF.attach(STEPF, DIRF);
+  stepperF.attachEnable(ENF, 0, LOW);
+  stepperF.autoEnable(1);
+  stepperF.setSpeedSteps(jfsps*10);
+  stepperF.setRampLen(0);
+  //stepperF.setZero();  stepperF.rotate(0);
 
 }
 
@@ -489,23 +478,37 @@ void loop() {
   // Handle feed position for winding count
   if( iswinding_flag ) {
 
-    if( !stepperW->isRunning() ) {
-      stepperW->stopMove();
-      stepperF->stopMove();
+    if( !stepperW.moving() ) {
+      stepperW.stop();
+      stepperF.stop();
       iswinding_flag = 0;
     }
 
-    // Set feed to required position
-    int ws = stepperW->getCurrentPosition();
-    int riv = (int)round(getval_ptriang(ws, pt_per, pt_slope, pt_dc, pt_wmin));
-    if( stepperF->getCurrentPosition()!=riv ) {
-      Serial.println("Moving feed stepper to position " + String(riv) + " with ws=" + String(ws));
-      stepperF->moveTo(riv);
+    if( 1 ) {
+      if( feed_direction==1 && stepperF.currentPosition()>fs_u ) {
+        feed_direction = -1;
+        stepperF.rotate(feed_direction);
+      }
+
+      if( feed_direction==-1 && stepperF.currentPosition()<fs_l ) {
+        feed_direction = 1;
+        stepperF.rotate(feed_direction);
+      }
+    } else {
+      // Set feed to required position
+      int ws = stepperW.currentPosition();
+      int riv = (int)round(getval_ptriang(ws, pt_per, pt_slope, pt_dc, pt_wmin));
+      Serial.println("current,target,stepsrem=" + String(stepperF.currentPosition()) + "," + String(riv) + "," + String(stepperF.stepsToDo()));
+      if( stepperF.currentPosition()!=riv ) {
+        //Serial.println("Feed stepper to current,target=" + String(stepperF.currentPosition()) + "," + String(riv));
+        Serial.println("Calling stepperF.moveTo(" + String(riv) + ")");
+        stepperF.moveTo(riv);
+      }
     }
 
   }
 
   report_status();  // timed report
 
-  delay(20);
+  delay(100);
 }
