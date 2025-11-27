@@ -228,6 +228,7 @@ void serialcmd(char cmd)
   }
   if( cmd=='K' ) { jwsps = (int)round(getval_btserial()); prefs.putInt("jwsps", jwsps); }
   if( cmd=='J' ) { jfsps = (int)round(getval_btserial()); prefs.putInt("jfsps", jfsps); }
+  if( cmd=='v' ) { wsacc = (int)round(getval_btserial()); prefs.putInt("wsacc", wsacc); }
 
   if( cmd=='F' ) {
     fs_l = stepperF.currentPosition();
